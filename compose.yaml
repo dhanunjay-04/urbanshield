@@ -1,0 +1,8 @@
+services:
+  urbanshieldproject:
+    image: urbanshieldproject
+    build:
+      context: .
+      dockerfile: ./Dockerfile
+    ports:
+      - 8000:8000

@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>UrbanShield — Infrastructure Risk Dashboard</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+  :root { --bg:#0f1419; --panel:#161d27; --border:#263140; --text:#e6edf3; --muted:#8b98a5; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: -apple-system, Segoe UI, Roboto, sans-serif; background:var(--bg); color:var(--text); }
+  header { padding:16px 24px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; }
+  header h1 { font-size:18px; margin:0; }
+  header .sub { color:var(--muted); font-size:13px; }
+  .header-actions { display:flex; align-items:center; gap:10px; }
+  .header-actions a, .header-actions button { border:1px solid var(--border); border-radius:6px; padding:9px 12px; color:var(--text); background:#1c2530; text-decoration:none; font:inherit; font-size:13px; font-weight:600; cursor:pointer; }
+  .header-actions button { background:#18794e; border-color:#18794e; }
+  .header-actions button:hover { background:#209563; }
+  .layout { display:flex; height:calc(100vh - 60px); }
+  #map { flex:1; }
+  #sidebar { width:340px; padding:16px; overflow-y:auto; border-left:1px solid var(--border); background:var(--panel); }
+  .stat-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:16px; }
+  .stat-card { background:#1c2530; border:1px solid var(--border); border-radius:8px; padding:10px; }
+  .stat-card .num { font-size:20px; font-weight:700; }
+  .stat-card .label { font-size:11px; color:var(--muted); text-transform:uppercase; }
+  select, input[type=range] { width:100%; background:#1c2530; color:var(--text); border:1px solid var(--border); border-radius:6px; padding:6px; margin-bottom:10px; }
+  .asset-item { border-bottom:1px solid var(--border); padding:8px 0; font-size:13px; cursor:pointer; }
+  .asset-item:hover { background:#1c2530; }
+  .tier-critical { color:#ff4d4f; }
+  .tier-high { color:#ff9c40; }
+  .tier-medium { color:#ffd542; }
+  .tier-low { color:#5cd65c; }
+  h3 { font-size:13px; text-transform:uppercase; color:var(--muted); margin:16px 0 8px; }
+  .assistant-panel { position:fixed; z-index:1000; top:76px; right:16px; bottom:16px; width:min(390px, calc(100vw - 32px)); display:grid; grid-template-rows:auto auto 1fr auto; background:var(--panel); border:1px solid var(--border); border-radius:8px; box-shadow:0 18px 48px #0008; transform:translateX(calc(100% + 24px)); visibility:hidden; transition:transform .22s ease, visibility .22s; }
+  .assistant-panel.open { transform:translateX(0); visibility:visible; }
+  .assistant-head { display:flex; justify-content:space-between; align-items:flex-start; padding:16px; border-bottom:1px solid var(--border); }
+  .assistant-head h2 { margin:0; font-size:16px; }
+  .assistant-head p { margin:5px 0 0; color:var(--muted); font-size:12px; }
+  .assistant-close { width:32px; height:32px; border:1px solid var(--border); border-radius:6px; color:var(--text); background:#1c2530; font-size:19px; cursor:pointer; }
+  .assistant-prompts { display:flex; flex-wrap:wrap; gap:6px; padding:10px 12px; border-bottom:1px solid var(--border); }
+  .assistant-prompts button { border:1px solid var(--border); border-radius:16px; padding:6px 9px; background:#1c2530; color:var(--text); font-size:11px; cursor:pointer; }
+  #assistantMessages { overflow-y:auto; padding:14px; display:flex; flex-direction:column; gap:10px; }
+  .assistant-message { max-width:92%; padding:10px 12px; border:1px solid var(--border); border-radius:8px; background:#1c2530; font-size:13px; line-height:1.5; white-space:pre-wrap; overflow-wrap:anywhere; }
+  .assistant-message.user { align-self:flex-end; background:#173b32; border-color:#24634c; }
+  .assistant-message.error { border-color:#9b3d39; color:#ffb4ad; }
+  .assistant-form { display:flex; gap:8px; padding:12px; border-top:1px solid var(--border); }
+  .assistant-form input { min-width:0; flex:1; padding:10px; border:1px solid var(--border); border-radius:6px; background:#0f1419; color:var(--text); }
+  .assistant-form button { border:0; border-radius:6px; padding:0 14px; background:#18794e; color:#fff; font-weight:600; cursor:pointer; }
+  .assistant-form button:disabled { opacity:.55; cursor:wait; }
+  @media (max-width:700px) {
+    header { padding:12px; gap:10px; }
+    header .sub { font-size:11px; }
+    .header-actions { gap:6px; }
+    .header-actions a, .header-actions button { padding:8px; font-size:12px; }
+    .layout { height:calc(100dvh - 64px); flex-direction:column; }
+    #map { min-height:45vh; }
+    #sidebar { width:auto; min-height:0; border-left:0; border-top:1px solid var(--border); }
+    .assistant-panel { top:68px; right:8px; bottom:8px; width:calc(100vw - 16px); }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>🛡️ UrbanShield</h1>
+    <div class="sub">AI-Powered Geospatial Infrastructure Risk & Predictive Maintenance</div>
+  </div>
+  <div class="header-actions">
+    <a id="apiDocsLink" href="/api/docs" target="_blank" rel="noopener">API Docs</a>
+    <button id="assistantToggle" type="button" aria-expanded="false">Ask AI</button>
+    <div class="sub" id="conn-status">connecting to API…</div>
+  </div>
+</header>
+<div class="layout">
+  <div id="map"></div>
+  <div id="sidebar">
+    <div class="stat-grid" id="stats"></div>
+
+    <h3>Filters</h3>
+    <select id="typeFilter"><option value="">All asset types</option></select>
+    <select id="tierFilter">
+      <option value="">All risk tiers</option>
+      <option value="critical">Critical</option>
+      <option value="high">High</option>
+      <option value="medium">Medium</option>
+      <option value="low">Low</option>
+    </select>
+
+    <h3>Top Risk Assets</h3>
+    <div id="assetList"></div>
+  </div>
+</div>
+<aside class="assistant-panel" id="assistantPanel" aria-label="UrbanShield risk assistant" aria-hidden="true">
+  <div class="assistant-head">
+    <div><h2>UrbanShield Assistant</h2><p>Ask about risk, assets, or maintenance priorities.</p></div>
+    <button class="assistant-close" id="assistantClose" type="button" aria-label="Close assistant">&times;</button>
+  </div>
+  <div class="assistant-prompts" aria-label="Suggested questions">
+    <button type="button" data-prompt="Summarize the city's current infrastructure risk.">City risk</button>
+    <button type="button" data-prompt="Which assets should be prioritized for maintenance?">Maintenance</button>
+    <button type="button" data-prompt="Explain risk for asset AST-00001">Explain an asset</button>
+  </div>
+  <div id="assistantMessages" aria-live="polite">
+    <div class="assistant-message">Ask a question about the 2,500 infrastructure assets in this demo.</div>
+  </div>
+  <form class="assistant-form" id="assistantForm">
+    <input id="assistantInput" type="text" placeholder="Ask about infrastructure risk…" autocomplete="off" required>
+    <button id="assistantSend" type="submit">Send</button>
+  </form>
+</aside>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+// UrbanShield Frontend Configuration
+// Supports multiple ways to configure the API endpoint:
+// 1. Environment variable: window.URBANSHIELD_API_BASE (set by server)
+// 2. URL parameter: ?api_base=http://...
+// 3. localStorage: urbanshield_api_base
+// 4. Default: http://localhost:8000
+
+const IS_DIRECT_API = ['8000', '8010'].includes(window.location.port);
+
+function getAPIBase() {
+  // 1. Check URL parameters
+  const params = new URLSearchParams(window.location.search);
+  if (params.has('api_base')) return params.get('api_base');
+  
+  // 2. Check window global (set by server-side rendering)
+  if (typeof window.URBANSHIELD_API_BASE !== 'undefined') {
+    return window.URBANSHIELD_API_BASE;
+  }
+  
+  // 3. Check localStorage (persistence)
+  const stored = localStorage.getItem('urbanshield_api_base');
+  if (stored) return stored;
+  
+  // API-server pages use their origin; dashboard hosts use the reverse proxy.
+  const defaultBase = IS_DIRECT_API
+    ? window.location.origin
+    : (window.location.origin === 'null' ? 'http://localhost:8000' : `${window.location.origin}/api`);
+  console.log(`Using default API base: ${defaultBase}`);
+  return defaultBase;
+}
+
+const API_BASE = getAPIBase();
+console.log(`UrbanShield API base: ${API_BASE}`);
+const USE_PROXY_FRONTEND = window.location.origin !== 'null' && !IS_DIRECT_API;
+const ASSISTANT_BASE = USE_PROXY_FRONTEND
+  ? `${window.location.origin}/assistant-api`
+  : `${window.location.protocol}//${window.location.hostname || 'localhost'}:8001`;
+document.getElementById('apiDocsLink').href = USE_PROXY_FRONTEND
+  ? '/api/docs'
+  : new URL('/docs', API_BASE).href;
+
+const TIER_COLOR = { critical:"#ff4d4f", high:"#ff9c40", medium:"#ffd542", low:"#5cd65c" };
+
+const map = L.map('map').setView([17.25, 80.15], 13);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  attribution: '&copy; OpenStreetMap contributors', maxZoom: 18
+}).addTo(map);
+
+let markersLayer = L.layerGroup().addTo(map);
+
+async function fetchJSON(path, params={}) {
+  const url = new URL(API_BASE + path);
+  Object.entries(params).forEach(([k,v]) => { if (v !== "" && v != null) url.searchParams.set(k,v); });
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`${path} failed: ${res.status}`);
+  return res.json();
+}
+
+function renderStats(stats) {
+  document.getElementById('stats').innerHTML = `
+    <div class="stat-card"><div class="num">${stats.total_assets}</div><div class="label">Total Assets</div></div>
+    <div class="stat-card"><div class="num" style="color:${TIER_COLOR.critical}">${stats.critical_count}</div><div class="label">Critical</div></div>
+    <div class="stat-card"><div class="num">${(stats.avg_risk_score*100).toFixed(1)}%</div><div class="label">Avg Risk</div></div>
+    <div class="stat-card"><div class="num">${Object.keys(stats.by_type).length}</div><div class="label">Asset Types</div></div>
+  `;
+  const typeSelect = document.getElementById('typeFilter');
+  Object.keys(stats.by_type).forEach(t => {
+    const opt = document.createElement('option');
+    opt.value = t; opt.textContent = `${t} (${stats.by_type[t]})`;
+    typeSelect.appendChild(opt);
+  });
+}
+
+async function loadAssets() {
+  const asset_type = document.getElementById('typeFilter').value;
+  const risk_tier = document.getElementById('tierFilter').value;
+  const assets = await fetchJSON('/assets', { asset_type, risk_tier, limit: 500 });
+
+  markersLayer.clearLayers();
+  const listEl = document.getElementById('assetList');
+  listEl.innerHTML = '';
+
+  assets.slice(0, 300).forEach(a => {
+    const color = TIER_COLOR[a.risk_tier] || "#8b98a5";
+    const marker = L.circleMarker([a.latitude, a.longitude], {
+      radius: a.risk_tier === 'critical' ? 7 : a.risk_tier === 'high' ? 5 : 3,
+      color, fillColor: color, fillOpacity: 0.7, weight: 1
+    });
+    marker.bindPopup(`
+      <b>${a.asset_id}</b><br>${a.asset_type} (${a.material})<br>
+      Risk: <b style="color:${color}">${(a.risk_score*100).toFixed(1)}% — ${a.risk_tier}</b><br>
+      Age: ${a.age_years}y · Traffic: ${a.traffic_load}<br>
+      <i>Top driver: ${a.top_risk_drivers?.[0]?.feature || 'n/a'}</i>
+    `);
+    marker.addTo(markersLayer);
+  });
+
+  assets.slice(0, 25).forEach(a => {
+    const div = document.createElement('div');
+    div.className = 'asset-item';
+    div.innerHTML = `<b>${a.asset_id}</b> <span class="tier-${a.risk_tier}">${a.risk_tier}</span><br>
+      <span style="color:#8b98a5">${a.asset_type} · risk ${(a.risk_score*100).toFixed(0)}%</span>`;
+    div.onclick = () => map.setView([a.latitude, a.longitude], 16);
+    listEl.appendChild(div);
+  });
+}
+
+function appendAssistantMessage(text, role, isError=false) {
+  const message = document.createElement('div');
+  message.className = `assistant-message ${role}${isError ? ' error' : ''}`;
+  message.textContent = text;
+  const messages = document.getElementById('assistantMessages');
+  messages.appendChild(message);
+  messages.scrollTop = messages.scrollHeight;
+  return message;
+}
+
+async function askAssistant(question) {
+  const input = document.getElementById('assistantInput');
+  const send = document.getElementById('assistantSend');
+  appendAssistantMessage(question, 'user');
+  input.value = '';
+  send.disabled = true;
+  const waiting = appendAssistantMessage('Checking the infrastructure data…', 'assistant');
+  try {
+    const response = await fetch(`${ASSISTANT_BASE}/ask`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question })
+    });
+    if (!response.ok) throw new Error(`Assistant service returned ${response.status}`);
+    const result = await response.json();
+    waiting.remove();
+    appendAssistantMessage(result.answer || 'No answer was returned.', 'assistant', !result.success);
+  } catch (error) {
+    waiting.remove();
+    appendAssistantMessage('Assistant is unavailable. Check that its container and configured AI provider are running.', 'assistant', true);
+    console.error(error);
+  } finally {
+    send.disabled = false;
+    input.focus();
+  }
+}
+
+const assistantPanel = document.getElementById('assistantPanel');
+function setAssistantOpen(open) {
+  assistantPanel.classList.toggle('open', open);
+  assistantPanel.setAttribute('aria-hidden', String(!open));
+  document.getElementById('assistantToggle').setAttribute('aria-expanded', String(open));
+  if (open) document.getElementById('assistantInput').focus();
+}
+
+document.getElementById('assistantToggle').addEventListener('click', () => setAssistantOpen(true));
+document.getElementById('assistantClose').addEventListener('click', () => setAssistantOpen(false));
+document.getElementById('assistantForm').addEventListener('submit', event => {
+  event.preventDefault();
+  const question = document.getElementById('assistantInput').value.trim();
+  if (question) askAssistant(question);
+});
+document.querySelectorAll('[data-prompt]').forEach(button => {
+  button.addEventListener('click', () => askAssistant(button.dataset.prompt));
+});
+if (new URLSearchParams(window.location.search).get('assistant') === '1') {
+  setAssistantOpen(true);
+}
+
+async function init() {
+  try {
+    const stats = await fetchJSON('/stats');
+    document.getElementById('conn-status').textContent = '● connected';
+    renderStats(stats);
+    await loadAssets();
+    document.getElementById('typeFilter').onchange = loadAssets;
+    document.getElementById('tierFilter').onchange = loadAssets;
+  } catch (e) {
+    document.getElementById('conn-status').textContent = '● API offline — start backend with: uvicorn main:app --reload';
+    console.error(e);
+  }
+}
+init();
+</script>
+</body>
+</html>

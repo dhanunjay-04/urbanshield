@@ -1,0 +1,121 @@
+version: "3.9"
+
+services:
+  # PostgreSQL database with PostGIS extension
+  db:
+    image: postgis/postgis:16-3.4
+    container_name: urbanshield-db
+    environment:
+      POSTGRES_DB: ${DB_NAME:-urbanshield_db}
+      POSTGRES_USER: ${DB_USER:-urbanshield}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-urbanshield_dev}
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-urbanshield}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - urbanshield-net
+
+  # FastAPI backend
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: urbanshield-api
+    ports:
+      - "${API_PORT:-8000}:8000"
+    environment:
+      # Database configuration
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-urbanshield_db}
+      DB_USER: ${DB_USER:-urbanshield}
+      DB_PASSWORD: ${DB_PASSWORD:-urbanshield_dev}
+      
+      # API configuration
+      API_HOST: 0.0.0.0
+      API_PORT: 8000
+      API_RELOAD: "false"
+      
+      # Frontend API base (for CORS and frontend JS)
+      FRONTEND_API_BASE: ${FRONTEND_API_BASE:-http://localhost:8000}
+      
+      # Logging
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      
+      # AI Assistant configuration is consumed by the assistant service.
+      LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.2}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    
+    depends_on:
+      db:
+        condition: service_healthy
+    
+    volumes:
+      - ./db:/app/db
+      - ./ml:/app/ml
+      - ./logs:/app/logs
+    
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/docs')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+    
+    networks:
+      - urbanshield-net
+
+  # Natural-language AI assistant. Uses Ollama on the host by default.
+  assistant:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: urbanshield-assistant
+    ports:
+      - "${ASSISTANT_PORT:-8001}:8001"
+    environment:
+      URBANSHIELD_API: http://backend:8000
+      LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.2}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    depends_on:
+      backend:
+        condition: service_healthy
+    command: ["python", "ai_assistant/server.py"]
+    networks:
+      - urbanshield-net
+
+  # Nginx frontend server
+  frontend:
+    image: nginx:alpine
+    container_name: urbanshield-web
+    ports:
+      - "${FRONTEND_PORT:-8080}:80"
+    volumes:
+      - ./frontend:/usr/share/nginx/html:ro
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - backend
+    networks:
+      - urbanshield-net
+    environment:
+      - BACKEND_URL=${FRONTEND_API_BASE:-http://localhost:8000}
+
+volumes:
+  pgdata:
+    driver: local
+
+networks:
+  urbanshield-net:
+    driver: bridge

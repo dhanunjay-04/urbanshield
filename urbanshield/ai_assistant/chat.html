@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>UrbanShield AI Assistant</title>
+    <script>
+        window.location.replace('/dashboard?assistant=1');
+    </script>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            font-family: -apple-system, Segoe UI, Roboto, sans-serif;
+            background: linear-gradient(135deg, #0f1419 0%, #1a2332 100%);
+            color: #e6edf3;
+            height: 100vh;
+            overflow: hidden;
+        }
+        .container {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+        .header {
+            background: #161d27;
+            border-bottom: 1px solid #263140;
+            padding: 20px;
+            text-align: center;
+        }
+        .header h1 {
+            margin: 0;
+            font-size: 24px;
+            color: #58a6ff;
+        }
+        .header p {
+            margin: 5px 0 0;
+            font-size: 13px;
+            color: #8b98a5;
+        }
+        .chat-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+        .message {
+            display: flex;
+            margin-bottom: 10px;
+            animation: slideIn 0.3s ease-out;
+        }
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .message.user {
+            justify-content: flex-end;
+        }
+        .message.assistant {
+            justify-content: flex-start;
+        }
+        .message-content {
+            max-width: 70%;
+            padding: 12px 16px;
+            border-radius: 12px;
+            word-wrap: break-word;
+            line-height: 1.5;
+            font-size: 14px;
+        }
+        .user .message-content {
+            background: #238636;
+            color: #fff;
+        }
+        .assistant .message-content {
+            background: #1c2530;
+            border: 1px solid #263140;
+            color: #e6edf3;
+        }
+        .assistant.loading .message-content {
+            background: #161d27;
+            color: #8b98a5;
+            font-style: italic;
+        }
+        .input-area {
+            background: #161d27;
+            border-top: 1px solid #263140;
+            padding: 16px;
+            display: flex;
+            gap: 10px;
+        }
+        .input-area input {
+            flex: 1;
+            background: #0f1419;
+            border: 1px solid #263140;
+            color: #e6edf3;
+            padding: 12px 14px;
+            border-radius: 8px;
+            font-size: 14px;
+            outline: none;
+        }
+        .input-area input:focus {
+            border-color: #58a6ff;
+            box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.1);
+        }
+        .input-area button {
+            background: #238636;
+            color: #fff;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 14px;
+            transition: background 0.2s;
+        }
+        .input-area button:hover {
+            background: #2ea043;
+        }
+        .input-area button:disabled {
+            background: #444;
+            cursor: not-allowed;
+        }
+        .error {
+            background: #da3633 !important;
+            color: #fff !important;
+        }
+        .loading-dot {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #58a6ff;
+            animation: pulse 1.4s infinite;
+        }
+        .loading-dot:nth-child(2) { animation-delay: 0.2s; }
+        .loading-dot:nth-child(3) { animation-delay: 0.4s; }
+        @keyframes pulse {
+            0%, 60%, 100% { opacity: 0.3; }
+            30% { opacity: 1; }
+        }
+        .status {
+            font-size: 12px;
+            color: #8b98a5;
+            text-align: center;
+            padding: 10px;
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <div class="header">
+        <h1>🤖 UrbanShield AI Assistant</h1>
+        <p>Ask me anything about your infrastructure risk data</p>
+    </div>
+    
+    <div class="chat-container" id="chatContainer"></div>
+    
+    <div class="status" id="status">
+        <span id="statusText">Ready</span>
+    </div>
+    
+    <div class="input-area">
+        <input 
+            type="text" 
+            id="messageInput" 
+            placeholder="Ask about assets, risks, maintenance priorities..."
+            onkeypress="if(event.key==='Enter' && !event.shiftKey) sendMessage()"
+        />
+        <button onclick="sendMessage()" id="sendBtn">Send</button>
+    </div>
+</div>
+
+<script>
+const API_BASE = "http://localhost:8000";
+const AGENT_URL = "http://localhost:8001/ask";  // You'll run agent server on port 8001
+let isLoading = false;
+
+function addMessage(text, isUser = true, isError = false) {
+    const container = document.getElementById('chatContainer');
+    const message = document.createElement('div');
+    message.className = `message ${isUser ? 'user' : 'assistant'}${isError ? ' error' : ''}`;
+    
+    const content = document.createElement('div');
+    content.className = 'message-content';
+    
+    if (!isUser && !isError) {
+        // Format assistant response
+        content.innerHTML = text.replace(/\n/g, '<br>');
+    } else {
+        content.textContent = text;
+    }
+    
+    message.appendChild(content);
+    container.appendChild(message);
+    container.scrollTop = container.scrollHeight;
+}
+
+function addLoadingMessage() {
+    const container = document.getElementById('chatContainer');
+    const message = document.createElement('div');
+    message.className = 'message assistant loading';
+    message.id = 'loadingMessage';
+    
+    const content = document.createElement('div');
+    content.className = 'message-content';
+    content.innerHTML = '<span class="loading-dot"></span><span class="loading-dot"></span><span class="loading-dot"></span>';
+    
+    message.appendChild(content);
+    container.appendChild(message);
+    container.scrollTop = container.scrollHeight;
+}
+
+function removeLoadingMessage() {
+    const loading = document.getElementById('loadingMessage');
+    if (loading) loading.remove();
+}
+
+async function sendMessage() {
+    const input = document.getElementById('messageInput');
+    const text = input.value.trim();
+    
+    if (!text || isLoading) return;
+    
+    // Add user message
+    addMessage(text, true);
+    input.value = '';
+    
+    isLoading = true;
+    document.getElementById('sendBtn').disabled = true;
+    document.getElementById('statusText').textContent = 'Thinking...';
+    addLoadingMessage();
+    
+    try {
+        // Try to reach agent server
+        const response = await fetch(AGENT_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ question: text })
+        });
+        
+        if (!response.ok) {
+            throw new Error(`Server error: ${response.status}`);
+        }
+        
+        const data = await response.json();
+        removeLoadingMessage();
+        addMessage(data.answer, false);
+        document.getElementById('statusText').textContent = 'Ready';
+        
+    } catch (error) {
+        removeLoadingMessage();
+        
+        // Fallback message if server not running
+        const errorMsg = `⚠️ Could not connect to AI assistant server. 
+        
+Make sure to run in another terminal:
+\`\`\`
+cd urbanshield
+python ai_assistant/server.py
+\`\`\`
+
+Error: ${error.message}`;
+        
+        addMessage(errorMsg, false, true);
+        document.getElementById('statusText').textContent = 'Server offline';
+    }
+    
+    isLoading = false;
+    document.getElementById('sendBtn').disabled = false;
+}
+
+// Welcome message
+addMessage("👋 Hello! I'm the UrbanShield AI Assistant. I can help you explore your infrastructure risk data. Ask me anything like:\n\n• What's the overall city risk picture?\n• Show me critical assets\n• What bridges are at high risk?\n• Find assets near [latitude, longitude]\n• Explain the risk for [asset_id]", false);
+</script>
+</body>
+</html>
